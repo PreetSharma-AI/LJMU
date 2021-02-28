@@ -1,0 +1,48 @@
+############################################################################
+## Pre condition : Neo4J for Desktop installed
+##                 Neo4J Project and Database is created and Running
+##                 Neo4J Browser is installed and opened
+###############################################################################################
+# Query 1 : This will cleanup the database and will delete all existing nodes and relationship.
+################################################################################################
+match(a) detach delete a ;
+
+#########################################################################################################
+# Query 2 : This will upload csv file ,Map records and create Enities and relationship of csv file data.
+#########################################################################################################
+CALL apoc.load.csv('Datafiniti_Amazon1.csv', {header:true, ignore:['id','dateAdded','dateUpdated','asins','imageURLs','keys','reviews.dateSeen','reviews.numHelpful','reviews.sourceURLs','reviews.text','reviews.title','sourceURLs'],
+   mapping:{
+     rating: {type:'int'},
+     categories: {array:true, arraySep:','}
+   }
+})
+YIELD map as map
+merge (cu:Reviewer{ReviewerName: map.username,ReviewId:coalesce(map.id,round(rand())),ReviewDate:map.date,Recommendation:coalesce(map.doRecommend,'Not Available'),Rating:map.rating})
+merge (pr:Product{Product:map.name})
+merge (br:Brand{Brand:map.brand,Manufacture:map.manufacturer,ManufacturerNumber:map.manufacturerNumber})
+merge (ct:Category{Category:map.primaryCategories,Categories:map.categories})
+merge (gr:GoodRating)
+merge (brt:BadRating)
+merge(pr)-[:FROM_BRAND]->(br)
+merge(pr)-[:FROM_CATEGORY]->(ct)
+merge(pr)-[:REVIEWED_BY]->(cu)
+RETURN cu,br,pr,ct,gr,brt ;
+
+################################################################################################################
+# Query 3: This will update GoodRating entities with the +1 for all the records having ReviewRating score >=3 ; 
+#          Second part will create relationship between GoodRating and ReviewerName
+################################################################################################################
+match(re:Reviewer),(gre:GoodRating) where re.Rating >=3 with re,gre,count(*) AS noofgood with gre,count(noofgood) AS tlgood set gre.PositiveScore=tlgood RETURN gre.PositiveScore;
+match(re:Reviewer),(gre:GoodRating),(pre:Product) where re.Rating >=3 merge (re)-[:RATED_HIGHER]->(gre) RETURN gre
+
+################################################################################################################
+# Query 4: This will update BadRating entities with the -1 for all the records having ReviewRating score <3 ; 
+#          Second part will create relationship between BadRating and ReviewerName
+################################################################################################################
+match(re:Reviewer),(bre:BadRating) where re.Rating <3 with re,bre,count(*) AS noofbad with bre,count(noofbad) AS tlbad set bre.NegativeScore=-tlbad RETURN bre.NegativeScore;
+match(re:Reviewer),(bre:BadRating),(pre:Product) where re.Rating <3 merge (re)-[:RATED_LOWER]->(bre) RETURN bre
+
+################################################################################################################
+# Query 5: This will Update OverAll score (PositiveScore-NegativeScore) and build relationship 
+################################################################################################################
+match(re:Reviewer),(bre:BadRating),(gre:GoodRating),(orl:OverAll) set orl.OverAll=bre.NegativeScore+gre.PositiveScore merge (gre)-[:OVERALL]->(orl)<-[:OVERALL]-(bre) return orl
